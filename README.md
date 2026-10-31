@@ -4,25 +4,324 @@
 
 ## Description
 
+Inception is a system administration project that builds a small web infrastructure inside a virtual machine using Docker Compose.
+
+The project consists of three dedicated services:
+
+- **NGINX** — the only public entry point, serving HTTPS on port 443 with TLS 1.2 or TLS 1.3.
+- **WordPress + PHP-FPM** — provides the WordPress application and executes PHP.
+- **MariaDB** — stores the WordPress database.
+
+Each service runs in its own Docker container and is built from a custom Dockerfile based on Alpine Linux.
+
+Docker Compose defines how the containers are built, connected, configured, and restarted. A dedicated Docker network connects the services, while Docker named volumes persist the WordPress files and MariaDB database.
+
+The resulting request flow is:
+
+```text
+Client
+  |
+  | HTTPS :443
+  v
+NGINX
+  |
+  | FastCGI :9000
+  v
+WordPress + PHP-FPM
+  |
+  | MariaDB protocol :3306
+  v
+MariaDB
+```
+
+Only NGINX publishes a port to the host.
+
+### Project structure
+
+```text
+.
+├── Makefile
+├── README.md
+├── USER_DOC.md
+├── DEV_DOC.md
+├── secrets/                  # local only, ignored by Git
+└── srcs/
+    ├── .env
+    ├── docker-compose.yml
+    └── requirements/
+        ├── mariadb/
+        │   ├── Dockerfile
+        │   ├── conf/
+        │   └── tools/
+        ├── nginx/
+        │   ├── Dockerfile
+        │   ├── conf/
+        │   └── tools/
+        ├── wordpress/
+        │   ├── Dockerfile
+        │   ├── conf/
+        │   └── tools/
+        └── tools/
+            └── setup-host.sh
+```
+
+The `Dockerfile` of each service defines how its Docker image is built. The `conf` directories contain service configuration files, while the `tools` directories contain initialization and entrypoint scripts.
+
+`docker-compose.yml` combines these independent services into one infrastructure by defining their networks, volumes, secrets, environment variables, dependencies, and restart policies.
+
 ## Architecture
 
+The complete environment has two levels of isolation.
+
+The first level is the virtual machine. It separates the entire Inception environment from the physical host.
+
+The second level is Docker. Inside the VM, Docker separates the individual NGINX, WordPress, and MariaDB services into dedicated containers.
+
+```text
+Physical host
+└── Virtual Machine
+    └── Docker Engine
+        ├── nginx
+        ├── wordpress
+        └── mariadb
+```
+
+The containers share the Linux kernel of the virtual machine, but have isolated filesystems, processes, networking, and runtime environments.
+
+Two Docker named volumes provide persistent storage:
+
+- `mariadb` → `/var/lib/mysql`
+- `wordpress` → `/var/www/html`
+
+The Docker daemon data root is configured under:
+
+```text
+/home/<login>/data/docker
+```
+
+This keeps the persistent Docker named-volume data under `/home/<login>/data` without converting the volumes into bind mounts.
+
+Sensitive passwords are provided through Docker secrets and are not stored in the Git repository.
+
 ## Instructions
+
+### Prerequisites
+
+The project is designed to run inside the Inception virtual machine with:
+
+- Linux
+- Docker Engine
+- Docker Compose
+- `doas`
+- Internet access during the initial build
+- a network interface named `eth0`
+
+### First-time host setup
+
+From the repository root:
+
+```sh
+make setup
+```
+
+This configures:
+
+- the Docker data root under `/home/<login>/data/docker`;
+- the local `<login>.42.fr` hostname mapping.
+
+The current project domain is:
+
+```text
+sohyamaz.42.fr
+```
+
+### Required local secrets
+
+The following files must exist locally under `secrets/`:
+
+```text
+secrets/db_password.txt
+secrets/db_root_password.txt
+secrets/wp_admin_password.txt
+secrets/wp_user_password.txt
+```
+
+The `secrets/` directory is excluded from Git and must never be committed.
+
+### Build and start
+
+```sh
+make
+```
+
+This builds the Docker images with Docker Compose and starts the complete stack.
+
+Check the running services with:
+
+```sh
+make ps
+```
+
+### Access
+
+Website:
+
+```text
+https://sohyamaz.42.fr
+```
+
+WordPress administration:
+
+```text
+https://sohyamaz.42.fr/wp-admin
+```
+
+A self-signed TLS certificate is used, so browsers may display a certificate warning.
+
+HTTP on port 80 is intentionally unavailable.
+
+### Stop and start
+
+Stop existing containers without deleting them:
+
+```sh
+make stop
+```
+
+Start them again:
+
+```sh
+make start
+```
+
+Remove the containers and network while preserving persistent volumes:
+
+```sh
+make down
+```
+
+Rebuild and start again:
+
+```sh
+make
+```
+
+### Destructive cleanup
+
+```sh
+make fclean
+```
+
+This removes the containers, project images, and named volumes.
+
+Because the named volumes contain the WordPress files and MariaDB database, this command deletes the persistent application data.
+
+`make re` performs `fclean` followed by a complete rebuild and is therefore also destructive to persistent application data.
 
 ## Technical Choices
 
 ### Virtual Machines vs Docker
-VMとDockerの大きな違いは、何をどこまで分離・仮想化するかにある。
-VMはハードウェアを仮想化し、その上で独自のkernelを含むGuest OSを実行する。一方Docker Containerは独自のkernelを持たず、Host側のkernelを共有しながら、userland・filesystem・process・networkなどの実行環境を隔離する。
-VMが文字通り「仮想化された別のPC」に近い環境を提供するのに対し、Dockerが提供するのは、Host kernel上で隔離されたアプリケーション実行環境である。
-VMのメリットは、独自kernelを持つことによる強い隔離性と、Hostとは異なるOS環境まで構築できる点にある。一方Dockerはkernelを共有するため、VMより軽量で起動も速く、Imageによって同じ実行環境を容易に再現・配布できる。
-したがってVMとDockerは単純な優劣関係ではなく、必要な隔離の強さ、互換性、実行効率、再現性などに応じて使い分けるものである。
+
+A virtual machine virtualizes a complete machine environment. It runs its own guest operating system and kernel on virtualized hardware.
+
+A Docker container does not provide another complete virtual machine. Containers share the host Linux kernel while isolating their processes, filesystem, networking, and user-space runtime environment.
+
+Virtual machines therefore provide a stronger boundary and can run a different operating system kernel from the physical host, but they are comparatively heavier.
+
+Containers are lightweight and fast to create because they do not boot a separate kernel for every service. Docker images also make application environments reproducible and portable.
+
+In this project both mechanisms have different responsibilities:
+
+- the **VM** isolates the whole Inception environment from the physical machine;
+- **Docker containers** isolate the individual services inside that environment.
+
+They solve different problems and are not simply alternatives where one is universally better than the other.
 
 ### Secrets vs Environment Variables
 
+Environment variables are appropriate for non-sensitive configuration such as:
+
+- domain names;
+- database names;
+- usernames;
+- WordPress site settings.
+
+This project stores these values in `srcs/.env`.
+
+Passwords are treated differently. They are stored locally in files under `secrets/` and exposed to containers through Docker secrets.
+
+Inside a container, a secret is available as a file under `/run/secrets/`.
+
+This avoids placing passwords directly in Dockerfiles or the committed `.env` file and reduces accidental exposure through normal environment inspection.
+
 ### Docker Network vs Host Network
+
+The project uses a dedicated Docker bridge network named `inception`.
+
+The containers communicate with each other through this network using Docker service names:
+
+```text
+nginx -> wordpress:9000
+wordpress -> mariadb:3306
+```
+
+Docker networking provides service isolation and internal DNS-based service discovery.
+
+Using the host network would make containers share the host's network namespace and would reduce the network isolation between the infrastructure and the host.
+
+For this project, host networking is neither necessary nor allowed.
 
 ### Docker Volumes vs Bind Mounts
 
+A Docker named volume is storage managed by Docker. Containers refer to the volume by its Docker-managed name rather than by an arbitrary host filesystem path.
+
+A bind mount directly maps a specific host path into a container.
+
+This project intentionally uses named volumes for WordPress and MariaDB persistence.
+
+To satisfy the requirement that the data resides under `/home/<login>/data` while keeping the storage as true Docker named volumes, the Docker daemon data root is configured as:
+
+```text
+/home/<login>/data/docker
+```
+
+The resulting volume data is stored under Docker's own volume directory, for example:
+
+```text
+/home/<login>/data/docker/volumes/srcs_mariadb/_data
+/home/<login>/data/docker/volumes/srcs_wordpress/_data
+```
+
+The volumes therefore remain Docker-managed named volumes rather than bind mounts.
+
 ## Resources
 
-## AI Usage
+The following references were used while implementing and understanding the project:
+
+- Docker Documentation — https://docs.docker.com/
+- Docker Compose Documentation — https://docs.docker.com/compose/
+- Docker storage documentation — https://docs.docker.com/engine/storage/
+- Alpine Linux Wiki — https://wiki.alpinelinux.org/
+- NGINX Documentation — https://nginx.org/en/docs/
+- MariaDB Documentation — https://mariadb.com/kb/en/documentation/
+- WordPress CLI Documentation — https://developer.wordpress.org/cli/commands/
+- PHP-FPM documentation — https://www.php.net/manual/en/install.fpm.php
+- OpenSSL Documentation — https://docs.openssl.org/
+
+### AI usage
+
+AI tools were used as an assistant during the project.
+
+They were used to:
+
+- explain Docker, container, virtual-machine, networking, volume, TLS, and process-management concepts;
+- review the project subject and evaluation requirements;
+- help investigate configuration and runtime problems;
+- suggest and review shell-script, Dockerfile, Docker Compose, NGINX, MariaDB, and PHP-FPM configuration approaches;
+- help design validation commands and test cases;
+- review the repository for requirement compliance;
+- assist with drafting and reviewing project documentation.
+
+AI-generated suggestions were not treated as authoritative. Configuration and commands were inspected, executed, tested inside the project VM, and corrected when their behavior did not match the project requirements.
+
+The final responsibility for understanding, testing, and defending the implementation remains with the project author.
