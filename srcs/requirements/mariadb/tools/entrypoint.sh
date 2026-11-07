@@ -11,21 +11,7 @@ if [ ! -d "/var/lib/mysql/mysql" ]; then
         --datadir=/var/lib/mysql \
         --auth-root-authentication-method=normal
 
-    mariadbd \
-        --user=mysql \
-        --datadir=/var/lib/mysql \
-        --skip-networking &
-
-    pid="$!"
-
-    until mariadb-admin \
-        --socket=/run/mysqld/mysqld.sock \
-        ping --silent
-    do
-        sleep 1
-    done
-
-    mariadb --socket=/run/mysqld/mysqld.sock <<SQL
+    mariadb --bootstrap <<SQL
 ALTER USER 'root'@'localhost'
     IDENTIFIED BY '${DB_ROOT_PASSWORD}';
 
@@ -41,13 +27,6 @@ GRANT ALL PRIVILEGES
 FLUSH PRIVILEGES;
 SQL
 
-    mariadb-admin \
-        --socket=/run/mysqld/mysqld.sock \
-        -uroot \
-        -p"${DB_ROOT_PASSWORD}" \
-        shutdown
-
-    wait "$pid"
 fi
 
 exec mariadbd \
