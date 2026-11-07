@@ -11,7 +11,10 @@ if [ ! -d "/var/lib/mysql/mysql" ]; then
         --datadir=/var/lib/mysql \
         --auth-root-authentication-method=normal
 
-    mariadb --bootstrap <<SQL
+    mariadbd \
+		--user=mysql \
+		--datadir=/var/lib/mysql \
+		 --bootstrap <<SQL
 ALTER USER 'root'@'localhost'
     IDENTIFIED BY '${DB_ROOT_PASSWORD}';
 
