@@ -15,6 +15,7 @@ if [ ! -d "/var/lib/mysql/mysql" ]; then
 		--user=mysql \
 		--datadir=/var/lib/mysql \
 		 --bootstrap <<SQL
+FLUSH PRIVILEGES;
 ALTER USER 'root'@'localhost'
     IDENTIFIED BY '${DB_ROOT_PASSWORD}';
 
