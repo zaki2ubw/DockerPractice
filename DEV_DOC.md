@@ -321,14 +321,14 @@ db_root_password
 
 On the first startup, the entrypoint:
 
-1. initializes the MariaDB data directory;
-2. temporarily starts MariaDB locally;
+1. initializes the MariaDB data directory using `mariadb-install-db`;
+2. executes initialization SQL using `mariadbd --bootstrap`, without starting a background server;
 3. configures the root password;
 4. creates the WordPress database;
 5. creates the normal database user;
 6. grants that user access to the WordPress database;
-7. stops the temporary server;
-8. replaces the shell process with the final `mariadbd` process.
+7. skips initialization on subsequent starts when the MariaDB system database directory already exists;
+8. replaces the shell process with the final `mariadbd` process using `exec`.
 
 The final process uses `exec`, allowing MariaDB to become the main container process.
 
