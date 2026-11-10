@@ -26,7 +26,10 @@ JSON"
     doas service docker restart
 fi
 
-if ! grep -q "${DOMAIN_NAME}" /etc/hosts; then
+# 現在のIPとドメインの組み合わせが登録済みなら変更しない
+if ! grep -qFx "${VM_IP} ${DOMAIN_NAME}" /etc/hosts; then
+    # 古いドメイン設定を除去して、現在のIPで登録する
+    doas sed -i "\|[[:space:]]${DOMAIN_NAME}$|d" /etc/hosts
     echo "${VM_IP} ${DOMAIN_NAME}" | doas tee -a /etc/hosts >/dev/null
 fi
 
