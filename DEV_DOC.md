@@ -50,6 +50,7 @@ The service images use Alpine Linux 3.23 as their base image.
 │   ├── wp_admin_password.txt
 │   └── wp_user_password.txt
 └── srcs/
+    ├── .env.example
     ├── .env
     ├── docker-compose.yml
     └── requirements/
@@ -75,72 +76,22 @@ The service images use Alpine Linux 3.23 as their base image.
             └── setup-host.sh
 ```
 
-The `secrets/` directory is intentionally excluded from Git.
+`secrets/` and `srcs/.env` are generated locally by `make init` and are intentionally excluded from Git. `srcs/.env.example` is the tracked template.
 
 ## Initial setup from scratch
 
-### 1. Review environment configuration
-
-The non-sensitive application settings are stored in:
-
-```text
-srcs/.env
-```
-
-Current values include:
-
-```text
-DOMAIN_NAME=sohyamaz.42.fr
-MYSQL_DATABASE=wordpress
-MYSQL_USER=wpuser
-
-WP_TITLE=Inception
-WP_ADMIN_USER=owner42
-WP_ADMIN_EMAIL=owner42@42.fr
-WP_USER=user42
-WP_USER_EMAIL=user42@42.fr
-```
-
-If adapting the project for another 42 login, update at least:
-
-```text
-DOMAIN_NAME=<login>.42.fr
-```
-
-The NGINX `server_name` in:
-
-```text
-srcs/requirements/nginx/conf/default.conf
-```
-
-must match the selected domain.
-
-### 2. Create local secrets
-
-Create the local secrets directory:
+From the repository root:
 
 ```sh
-mkdir -p secrets
+make setup
+make init
+vi srcs/.env
+make
 ```
 
-Generate passwords, for example:
+Each step has a single responsibility. `make init` does not call `make setup`.
 
-```sh
-head -c 24 /dev/urandom | base64 > secrets/db_password.txt
-head -c 24 /dev/urandom | base64 > secrets/db_root_password.txt
-head -c 24 /dev/urandom | base64 > secrets/wp_admin_password.txt
-head -c 24 /dev/urandom | base64 > secrets/wp_user_password.txt
-```
-
-Do not commit these files.
-
-Verify that Git ignores them:
-
-```sh
-git check-ignore -v secrets/db_password.txt
-```
-
-### 3. Configure the VM host
+### 1. Configure the VM host
 
 Run:
 
@@ -156,12 +107,14 @@ srcs/requirements/tools/setup-host.sh
 
 The script:
 
-1. determines the current login;
-2. creates `/home/<login>/data/docker`;
-3. configures Docker's `data-root` to use that location;
-4. restarts Docker when the root changes;
-5. retrieves the IPv4 address of `eth0`;
-6. adds `<login>.42.fr` to `/etc/hosts` if necessary.
+1. determines the current login and uses `<login>.42.fr` as the domain;
+2. retrieves the IPv4 address of `eth0`;
+3. creates `/home/<login>/data/docker`;
+4. writes `/etc/docker/daemon.json` with that `data-root` and restarts Docker, only when the current Docker root differs;
+5. checks whether `/etc/hosts` contains the exact line `<current IP> <login>.42.fr`;
+6. if not, removes any existing line for `<login>.42.fr` (for example one with an old IP) and appends the current mapping.
+
+The script is safe to re-run: an already correct Docker root and hosts entry are left unchanged.
 
 The helper is intended for the dedicated Inception VM. It assumes the main interface is named `eth0` and manages `/etc/docker/daemon.json`.
 
@@ -176,6 +129,80 @@ Expected:
 ```text
 /home/<login>/data/docker
 ```
+
+### 2. Generate `.env` and secrets
+
+Run:
+
+```sh
+make init
+```
+
+This:
+
+1. copies `srcs/.env.example` to `srcs/.env` if `srcs/.env` does not exist;
+2. creates `secrets/` and generates the four password files with `head -c 24 /dev/urandom | base64`, readable only by the owner (`umask 077`):
+
+```text
+secrets/db_password.txt
+secrets/db_root_password.txt
+secrets/wp_admin_password.txt
+secrets/wp_user_password.txt
+```
+
+On re-run, an existing `srcs/.env` and existing non-empty secret files are preserved. If a secret file exists but is empty, `make init` stops with an error; delete or fill the file and run it again.
+
+`make init` never fills in or rewrites the values inside `srcs/.env`.
+
+Verify that Git ignores the generated files:
+
+```sh
+git check-ignore -v srcs/.env secrets/db_password.txt
+```
+
+### 3. Edit environment configuration
+
+```sh
+vi srcs/.env
+```
+
+The template contains:
+
+```text
+DOMAIN_NAME=
+MYSQL_DATABASE=wordpress
+MYSQL_USER=wpuser
+
+WP_TITLE=Inception
+WP_ADMIN_USER=
+WP_ADMIN_EMAIL=
+WP_USER=
+WP_USER_EMAIL=
+```
+
+Set the five empty values manually:
+
+```text
+DOMAIN_NAME=sohyamaz.42.fr
+WP_ADMIN_USER=<administrator name>
+WP_ADMIN_EMAIL=<administrator email>
+WP_USER=<regular user name>
+WP_USER_EMAIL=<regular user email>
+```
+
+`MYSQL_DATABASE`, `MYSQL_USER`, and `WP_TITLE` have usable defaults.
+
+The administrator name must not contain `admin` or `administrator` (for example `admin`, `Admin`, `administrator`, `admin-123`), as forbidden by the subject.
+
+Passwords are not set in `.env`; they come from the files under `secrets/`.
+
+If adapting the project for another 42 login, use `DOMAIN_NAME=<login>.42.fr`. The NGINX `server_name` in:
+
+```text
+srcs/requirements/nginx/conf/default.conf
+```
+
+must match the selected domain.
 
 ### 4. Build and launch
 
@@ -214,7 +241,15 @@ Build the images and start the stack.
 make setup
 ```
 
-Configure the Docker data root and local hostname mapping.
+Configure the Docker data root and local hostname mapping. Re-run after cloning the VM or when its IP address changes.
+
+### Initialize local configuration
+
+```sh
+make init
+```
+
+Create `srcs/.env` from the template and generate the four secret files. Existing files are preserved.
 
 ### Stop existing containers
 
@@ -222,11 +257,15 @@ Configure the Docker data root and local hostname mapping.
 make stop
 ```
 
+Containers are stopped but not removed.
+
 ### Start existing containers
 
 ```sh
 make start
 ```
+
+Starts containers that already exist. It does not build images or create missing containers; use `make` for that.
 
 ### Restart services
 
@@ -253,13 +292,15 @@ make down
 make clean
 ```
 
+Both remove the containers and the Compose network. Named volumes are kept.
+
 ### Remove containers, images, and persistent volumes
 
 ```sh
 make fclean
 ```
 
-This is destructive.
+Runs `docker compose down -v --rmi all`. This is destructive: the named volumes holding WordPress files and the MariaDB database are deleted.
 
 ### Full destructive rebuild
 
@@ -543,6 +584,23 @@ Expected protocols:
 TLSv1.2 TLSv1.3
 ```
 
+### TLS handshake per protocol version
+
+```sh
+openssl s_client -connect sohyamaz.42.fr:443 -servername sohyamaz.42.fr -tls1_2 </dev/null
+openssl s_client -connect sohyamaz.42.fr:443 -servername sohyamaz.42.fr -tls1_3 </dev/null
+```
+
+Both should complete the handshake and report the negotiated protocol.
+
+### Published ports
+
+```sh
+docker ps
+```
+
+Only `nginx` should show a host mapping (`0.0.0.0:443->443/tcp`). `wordpress` (9000) and `mariadb` (3306) must not publish ports to the host.
+
 ### HTTP must not be available
 
 ```sh
@@ -623,6 +681,104 @@ If the configuration affects a dependent service, recreate the required dependen
 
 Do not use `make re` merely to rebuild configuration unless intentionally deleting the persistent data.
 
+## Changing the VM IP address
+
+`<login>.42.fr` is resolved through `/etc/hosts`. After cloning the VM, or whenever the IP address of `eth0` changes, run again:
+
+```sh
+make setup
+```
+
+`setup-host.sh` replaces an outdated `<login>.42.fr` line with the current IP and leaves a correct entry unchanged.
+
+Check the current IP and the registered mapping:
+
+```sh
+ip -4 addr show eth0
+grep 'sohyamaz.42.fr' /etc/hosts
+```
+
+Both should show the same IPv4 address.
+
+## Temporarily changing the HTTPS host port
+
+The subject-compliant configuration publishes port 443. For evaluation or testing only, the host port can be changed temporarily. The example below uses 8443.
+
+### Change the published port
+
+Edit `srcs/docker-compose.yml`, in the `nginx` service:
+
+```yaml
+ports:
+  - "8443:443"
+```
+
+The format is `HOST_PORT:CONTAINER_PORT`. NGINX still listens on 443 inside the container, so `listen` in `nginx/conf/default.conf` and `EXPOSE` in the NGINX Dockerfile are not changed.
+
+Apply the change:
+
+```sh
+make
+```
+
+Verify:
+
+```sh
+docker ps
+curl -k -I https://sohyamaz.42.fr:8443
+```
+
+`docker ps` should show `0.0.0.0:8443->443/tcp` for `nginx`.
+
+### WordPress canonical URL
+
+WordPress stores its `home` and `siteurl` options in the database. After changing only the Compose port, requests to port 8443 may be redirected (HTTP 301) to the original `https://sohyamaz.42.fr`.
+
+To use 8443 as the canonical URL:
+
+```sh
+docker exec wordpress wp option update home \
+  'https://sohyamaz.42.fr:8443' --allow-root
+
+docker exec wordpress wp option update siteurl \
+  'https://sohyamaz.42.fr:8443' --allow-root
+```
+
+Verify:
+
+```sh
+curl -k -I https://sohyamaz.42.fr:8443
+```
+
+### Restore port 443
+
+1. While the stack is still running, restore the WordPress URLs:
+
+```sh
+docker exec wordpress wp option update home \
+  'https://sohyamaz.42.fr' --allow-root
+
+docker exec wordpress wp option update siteurl \
+  'https://sohyamaz.42.fr' --allow-root
+```
+
+2. Restore `srcs/docker-compose.yml`:
+
+```yaml
+ports:
+  - "443:443"
+```
+
+3. Apply and verify:
+
+```sh
+make
+docker ps
+curl -k -I https://sohyamaz.42.fr
+```
+
+This procedure does not delete the named volumes; WordPress content and the database are preserved. Do not use `make fclean` or `make re` for it.
+
 ## Persistence test
 
 A complete persistence test can be performed as follows:
@@ -640,3 +796,17 @@ make
 6. Confirm that MariaDB remains initialized.
 
 This verifies that application state is stored in the named volumes rather than only inside the disposable container layers.
+
+## Verified behavior
+
+The following was confirmed in the project VM:
+
+- initial build from a clean clone of the GitHub repository using `make setup`, `make init`, editing `srcs/.env`, and `make`;
+- the `nginx`, `wordpress`, and `mariadb` containers running;
+- HTTPS returning HTTP 200;
+- creation of the WordPress administrator and regular user;
+- persistence of posts and comments;
+- successful TLS 1.2 and TLS 1.3 connections;
+- connections to HTTP port 80 refused;
+- no host ports published by `wordpress` or `mariadb`;
+- temporary change of the host port to 8443 and restoration to 443 using the procedure above.

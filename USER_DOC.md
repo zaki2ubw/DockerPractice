@@ -32,17 +32,18 @@ Move to the repository root:
 cd ~/inception
 ```
 
-For a VM that has not yet been prepared, run:
+For the first startup, run:
 
 ```sh
-make setup
+make setup      # prepare the VM host (Docker data root, /etc/hosts)
+make init       # create srcs/.env and the secret files
+vi srcs/.env    # set DOMAIN_NAME and the WordPress account names/emails
+make            # build and start the stack
 ```
 
-Then build and start the stack:
+See [README.md](README.md) for the values required in `srcs/.env`.
 
-```sh
-make
-```
+After the first startup, `make` alone builds and starts the stack.
 
 Check its status:
 
@@ -132,13 +133,17 @@ The `-k` option accepts the project's self-signed certificate.
 
 ## WordPress accounts
 
-The configured WordPress usernames are defined in `srcs/.env`.
-
-Current accounts:
+Two WordPress accounts are created on the first startup. Their usernames and emails are the values set in `srcs/.env`:
 
 ```text
-Administrator: owner42
-User:          user42
+Administrator: WP_ADMIN_USER / WP_ADMIN_EMAIL
+Regular user:  WP_USER / WP_USER_EMAIL   (role: author)
+```
+
+Check the configured names with:
+
+```sh
+grep '^WP_' srcs/.env
 ```
 
 Their passwords are not stored in `.env` or committed to Git.
@@ -156,7 +161,7 @@ To access the administration panel, open:
 https://sohyamaz.42.fr/wp-admin
 ```
 
-and log in as `owner42` using the password stored locally in:
+and log in as the `WP_ADMIN_USER` account using the password stored locally in:
 
 ```text
 secrets/wp_admin_password.txt
@@ -172,11 +177,11 @@ secrets/db_password.txt
 secrets/db_root_password.txt
 ```
 
-The current database name and normal database user are:
+The default database name and normal database user from the template are:
 
 ```text
-Database: wordpress
-User:     wpuser
+Database: wordpress   (MYSQL_DATABASE)
+User:     wpuser      (MYSQL_USER)
 ```
 
 Passwords must never be committed to Git.
@@ -190,6 +195,14 @@ secrets/
 ```
 
 This directory is ignored by Git.
+
+`make init` generates random passwords for all four files. It keeps existing files and stops with an error if a file is empty.
+
+Read a password when needed, for example:
+
+```sh
+cat secrets/wp_admin_password.txt
+```
 
 For a fresh installation, credentials should be set before the first startup.
 
